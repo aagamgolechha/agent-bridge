@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mock Payment Gateway</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <span class="logo-icon">&#9670;</span>
+                <span class="logo-text">MockPay</span>
+            </div>
+        </div>
+        <ul class="nav-list">
+            <li><a href="#" class="nav-item active" data-page="dashboard"><span class="nav-icon">&#9632;</span> Dashboard</a></li>
+            <li><a href="#" class="nav-item" data-page="payments"><span class="nav-icon">&#9654;</span> Payments</a></li>
+            <li><a href="#" class="nav-item" data-page="subscriptions"><span class="nav-icon">&#9741;</span> Subscriptions</a></li>
+            <li><a href="#" class="nav-item" data-page="settings"><span class="nav-icon">&#9881;</span> Performance Settings</a></li>
+            <li><a href="#" class="nav-item" data-page="logs"><span class="nav-icon">&#9776;</span> API Logs</a></li>
+            <li><a href="#" class="nav-item" data-page="health"><span class="nav-icon">&#10003;</span> Health Monitor</a></li>
+        </ul>
+    </nav>
+
+    <!-- Main wrapper -->
+    <div class="main-wrapper">
+        <!-- Header -->
+        <header class="top-header">
+            <button class="menu-toggle" id="menuToggle">&#9776;</button>
+            <h1 class="page-title" id="pageTitle">Dashboard</h1>
+            <div class="header-right">
+                <span class="connection-status" id="connectionStatus">Disconnected</span>
+                <span class="header-time" id="headerTime"></span>
+            </div>
+        </header>
+
+        <!-- Main content -->
+        <main class="content" id="mainContent">
+            <!-- ============== DASHBOARD ============== -->
+            <section class="page active" id="page-dashboard">
+                <div class="dashboard-grid">
+                    <div class="card">
+                        <div class="card-header">Total Payments</div>
+                        <div class="card-value" id="dash-total-payments">0</div>
+                    </div>
+                    <div class="card card-success">
+                        <div class="card-header">Authorized</div>
+                        <div class="card-value" id="dash-authorized">0</div>
+                    </div>
+                    <div class="card card-info">
+                        <div class="card-header">Captured</div>
+                        <div class="card-value" id="dash-captured">0</div>
+                    </div>
+                    <div class="card card-warning">
+                        <div class="card-header">Refunded</div>
+                        <div class="card-value" id="dash-refunded">0</div>
+                    </div>
+                    <div class="card card-danger">
+                        <div class="card-header">Failed</div>
+                        <div class="card-value" id="dash-failed">0</div>
+                    </div>
+                    <div class="card card-success">
+                        <div class="card-header">Active Subscriptions</div>
+                        <div class="card-value" id="dash-active-subs">0</div>
+                    </div>
+                    <div class="card card-danger">
+                        <div class="card-header">Cancelled Subs</div>
+                        <div class="card-value" id="dash-cancelled-subs">0</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">API Status</div>
+                        <div class="card-value" id="dash-api-status">Checking...</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Avg Response Time</div>
+                        <div class="card-value" id="dash-avg-time">0 ms</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============== PAYMENTS ============== -->
+            <section class="page" id="page-payments">
+                <div class="section-toolbar">
+                    <button class="btn btn-primary" onclick="showPaymentModal('authorize')">+ Authorize Payment</button>
+                    <button class="btn btn-secondary" onclick="showPaymentModal('capture')">Capture</button>
+                    <button class="btn btn-secondary" onclick="showPaymentModal('refund')">Refund</button>
+                    <button class="btn btn-outline" onclick="loadPayments()">&#8635; Refresh</button>
+                </div>
+                <div class="table-container">
+                    <div class="table-toolbar">
+                        <input type="text" class="search-input" id="paymentSearch" placeholder="Search payments..." oninput="filterPayments()" />
+                    </div>
+                    <table class="data-table" id="paymentsTable">
+                        <thead>
+                            <tr>
+                                <th>Payment ID</th>
+                                <th>Customer</th>
+                                <th>Amount</th>
+                                <th>Currency</th>
+                                <th>Card</th>
+                                <th>Status</th>
+                                <th>Auth Code</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="paymentsBody"></tbody>
+                    </table>
+                    <div class="pagination" id="paymentsPagination"></div>
+                </div>
+            </section>
+
+            <!-- ============== SUBSCRIPTIONS ============== -->
+            <section class="page" id="page-subscriptions">
+                <div class="section-toolbar">
+                    <button class="btn btn-primary" onclick="showSubscriptionModal()">+ Create Subscription</button>
+                    <button class="btn btn-outline" onclick="loadSubscriptions()">&#8635; Refresh</button>
+                </div>
+                <div class="table-container">
+                    <div class="table-toolbar">
+                        <input type="text" class="search-input" id="subSearch" placeholder="Search subscriptions..." oninput="filterSubscriptions()" />
+                    </div>
+                    <table class="data-table" id="subscriptionsTable">
+                        <thead>
+                            <tr>
+                                <th>Subscription ID</th>
+                                <th>Customer</th>
+                                <th>Plan</th>
+                                <th>Amount</th>
+                                <th>Cycle</th>
+                                <th>Status</th>
+                                <th>Start Date</th>
+                                <th>Next Billing</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="subscriptionsBody"></tbody>
+                    </table>
+                    <div class="pagination" id="subscriptionsPagination"></div>
+                </div>
+            </section>
+
+            <!-- ============== SETTINGS ============== -->
+            <section class="page" id="page-settings">
+                <div class="settings-grid">
+                    <div class="card settings-card">
+                        <div class="card-header">Latency Configuration</div>
+                        <div class="settings-fields">
+                            <label>Min Latency (ms) <input type="number" id="setting-min-latency" value="50" /></label>
+                            <label>Max Latency (ms) <input type="number" id="setting-max-latency" value="300" /></label>
+                        </div>
+                    </div>
+                    <div class="card settings-card">
+                        <div class="card-header">Error Injection</div>
+                        <div class="settings-fields">
+                            <label>System Error Rate (%) <input type="number" id="setting-error-rate" value="0" min="0" max="100" /></label>
+                        </div>
+                    </div>
+                    <div class="card settings-card">
+                        <div class="card-header">Payment Outcome Rates</div>
+                        <div class="settings-fields">
+                            <label>Success Rate (%) <input type="number" id="setting-success-rate" value="90" min="0" max="100" /></label>
+                            <label>Decline Rate (%) <input type="number" id="setting-decline-rate" value="8" min="0" max="100" /></label>
+                            <label>Pending Rate (%) <input type="number" id="setting-pending-rate" value="2" min="0" max="100" /></label>
+                        </div>
+                    </div>
+                    <div class="card settings-card">
+                        <div class="card-header">Throttling</div>
+                        <div class="settings-fields">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setting-throttle-enabled" /> Enable Throttling
+                            </label>
+                            <label>Requests / Minute <input type="number" id="setting-throttle-rpm" value="60" min="1" /></label>
+                        </div>
+                    </div>
+                </div>
+                <div class="settings-note">
+                    <p>These settings are read from the backend health endpoint. To modify, restart the backend with the appropriate environment variables.</p>
+                </div>
+            </section>
+
+            <!-- ============== API LOGS ============== -->
+            <section class="page" id="page-logs">
+                <div class="section-toolbar">
+                    <button class="btn btn-outline" onclick="clearLogs()">Clear Logs</button>
+                    <button class="btn btn-outline" onclick="exportLogs()">Export Logs (JSON)</button>
+                </div>
+                <div class="table-container">
+                    <table class="data-table" id="logsTable">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Method</th>
+                                <th>Endpoint</th>
+                                <th>Status</th>
+                                <th>Time (ms)</th>
+                                <th>Result</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logsBody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- ============== HEALTH MONITOR ============== -->
+            <section class="page" id="page-health">
+                <div class="health-grid">
+                    <div class="card">
+                        <div class="card-header">Service Status</div>
+                        <div class="health-status-indicator" id="health-status">Unknown</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Database Status</div>
+                        <div class="health-status-indicator" id="health-database">Unknown</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Response Time</div>
+                        <div class="health-metric" id="health-response-time">0 ms</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Last Updated</div>
+                        <div class="health-metric" id="health-last-updated">--</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">Backend Configuration</div>
+                    <pre class="health-config" id="health-config">Loading...</pre>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Toast notification container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Modal overlay -->
+    <div class="modal-overlay" id="modalOverlay" onclick="closeModal()"></div>
+
+    <!-- Modal dialog -->
+    <div class="modal" id="modalDialog">
+        <div class="modal-header">
+            <h2 id="modalTitle">Modal</h2>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
