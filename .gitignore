@@ -1,1 +1,26 @@
 __pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.venv*/
+
+# SQLite databases (regenerated at startup)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Logs / generated artifacts
+*.log
+logs/
+.ab_reports/
+jmeter*.jtl
+report*.html
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

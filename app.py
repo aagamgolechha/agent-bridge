@@ -11,39 +11,85 @@ import time
 import asyncio
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional, List
+
+from dotenv import load_dotenv
+
+load_dotenv()  # Local .env support; production platform env vars take precedence.
 
 from fastapi import FastAPI, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import create_engine, Column, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from loki_logging import configure_logging
+from loki_logging import configure_logging, is_loki_enabled, get_loki_url
 
 logger = configure_logging()
+
+BASE_DIR = Path(__file__).resolve().parent
 
 # ──────────────────────────────────────────────
 # Configuration via Environment Variables
 # ──────────────────────────────────────────────
+# Local development: copy .env.example to .env and adjust.
+# Production: set these as platform env vars (they take precedence over .env).
 
-MIN_LATENCY_MS = int(os.getenv("MOCK_MIN_LATENCY_MS", "50"))
-MAX_LATENCY_MS = int(os.getenv("MOCK_MAX_LATENCY_MS", "300"))
-SYSTEM_ERROR_RATE = int(os.getenv("MOCK_SYSTEM_ERROR_RATE", "0"))
+MOCK_DATA_DIR = os.getenv("MOCK_DATA_DIR", str(BASE_DIR))
+MIN_LATENCY_MS = max(0, int(os.getenv("MOCK_MIN_LATENCY_MS", "50")))
+MAX_LATENCY_MS = max(0, int(os.getenv("MOCK_MAX_LATENCY_MS", "300")))
+if MAX_LATENCY_MS < MIN_LATENCY_MS:
+    MAX_LATENCY_MS = MIN_LATENCY_MS
+SYSTEM_ERROR_RATE = min(100, max(0, int(os.getenv("MOCK_SYSTEM_ERROR_RATE", "0"))))
 THROTTLE_ENABLED = os.getenv("MOCK_THROTTLE_ENABLED", "false").lower() == "true"
 THROTTLE_RPM = int(os.getenv("MOCK_THROTTLE_REQUESTS_PER_MINUTE", "60"))
 SUCCESS_RATE = int(os.getenv("MOCK_PAYMENT_SUCCESS_RATE", "90"))
 DECLINE_RATE = int(os.getenv("MOCK_PAYMENT_DECLINE_RATE", "8"))
 PENDING_RATE = int(os.getenv("MOCK_PAYMENT_PENDING_RATE", "2"))
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./mock_payments.db")
+# --- Fault injection (explicit, opt-in; all default to "no fault") ---
+MOCK_SEED = os.getenv("MOCK_SEED", "").strip()  # e.g. "42" for deterministic runs
+MOCK_FORCE_OUTCOME = os.getenv("MOCK_FORCE_OUTCOME", "").strip().upper()  # AUTHORIZED|DECLINED|PENDING|FAILED|""
+MOCK_FORCE_SYSTEM_ERROR = os.getenv("MOCK_FORCE_SYSTEM_ERROR", "false").lower() == "true"
+MOCK_DB_ERROR_RATE = min(100, max(0, int(os.getenv("MOCK_DB_ERROR_RATE", "0"))))
+MOCK_FORCE_DB_ERROR = os.getenv("MOCK_FORCE_DB_ERROR", "false").lower() == "true"
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+
+def _resolve_database_url() -> str:
+    """Resolve the SQLAlchemy URL, defaulting to a file next to this app.
+
+    Honors DATABASE_URL when set (e.g. ``postgresql://...`` from a host,
+    or ``sqlite:////data/mock_payments.db`` on a persistent disk).
+    Otherwise stores SQLite at ``MOCK_DATA_DIR/mock_payments.db`` so the
+    path does not depend on the process working directory.
+    """
+    if DATABASE_URL:
+        return DATABASE_URL
+    Path(MOCK_DATA_DIR).mkdir(parents=True, exist_ok=True)
+    db_path = Path(MOCK_DATA_DIR) / "mock_payments.db"
+    return f"sqlite:///{db_path}"
+
+
+RESOLVED_DATABASE_URL = _resolve_database_url()
+
+if MOCK_SEED:
+    try:
+        random.seed(int(MOCK_SEED))
+        logger.info("Deterministic mock mode enabled seed=%s", MOCK_SEED)
+    except ValueError:
+        logger.warning("Ignoring invalid MOCK_SEED=%r (must be an integer)", MOCK_SEED)
+        MOCK_SEED = ""
 
 # ──────────────────────────────────────────────
 # SQLAlchemy Setup
 # ──────────────────────────────────────────────
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+_sqlite_kwargs = {"check_same_thread": False} if RESOLVED_DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(RESOLVED_DATABASE_URL, connect_args=_sqlite_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -203,6 +249,15 @@ def detect_card_brand(card_number: str) -> str:
 
 
 def determine_payment_outcome():
+    # Deterministic override for tests/demos (seeded randomness otherwise).
+    if MOCK_FORCE_OUTCOME in ("AUTHORIZED", "DECLINED", "PENDING", "FAILED"):
+        reason = None
+        if MOCK_FORCE_OUTCOME == "DECLINED":
+            reason = "CARD_DECLINED"
+        elif MOCK_FORCE_OUTCOME == "FAILED":
+            reason = "SYSTEM_ERROR"
+        logger.warning("Forced payment outcome applied outcome=%s", MOCK_FORCE_OUTCOME)
+        return MOCK_FORCE_OUTCOME, reason
     rand = random.randint(1, 100)
     if rand <= SUCCESS_RATE:
         return "AUTHORIZED", None
@@ -213,6 +268,24 @@ def determine_payment_outcome():
     if rand <= cumulative:
         return "PENDING", None
     return "FAILED", "SYSTEM_ERROR"
+
+
+def maybe_raise_simulated_db_error(operation: str) -> None:
+    """Raise a simulated DB error when fault injection is armed.
+
+    Logs context (operation only — never payment secrets) and raises
+    SQLAlchemyError so existing handlers return a structured 500/DB_ERROR.
+    """
+    if MOCK_FORCE_DB_ERROR or (
+        MOCK_DB_ERROR_RATE > 0 and random.randint(1, 100) <= MOCK_DB_ERROR_RATE
+    ):
+        logger.error(
+            "Simulated database error injected operation=%s force_db_error=%s db_error_rate=%s",
+            operation,
+            MOCK_FORCE_DB_ERROR,
+            MOCK_DB_ERROR_RATE,
+        )
+        raise SQLAlchemyError(f"Simulated database error during {operation}")
 
 
 # ──────────────────────────────────────────────
@@ -394,13 +467,22 @@ async def log_requests(request: Request, call_next):
 @app.middleware("http")
 async def mock_simulation_middleware(request: Request, call_next):
     path = request.url.path
-    if path in ("/health", "/docs", "/openapi.json") or path.startswith(
-        ("/docs/", "/openapi/")
+    # Static frontend + docs/health bypass fault injection.
+    if path in ("/", "/app.js", "/styles.css", "/health", "/docs", "/openapi.json", "/favicon.ico") or path.startswith(
+        ("/docs/", "/openapi/", "/static/")
     ):
         return await call_next(request)
 
-    if SYSTEM_ERROR_RATE > 0 and random.randint(1, 100) <= SYSTEM_ERROR_RATE:
-        logger.error("System error simulation triggered for method=%s path=%s", request.method, path)
+    if MOCK_FORCE_SYSTEM_ERROR or (
+        SYSTEM_ERROR_RATE > 0 and random.randint(1, 100) <= SYSTEM_ERROR_RATE
+    ):
+        logger.error(
+            "System error simulation triggered method=%s path=%s forced=%s rate=%s",
+            request.method,
+            path,
+            MOCK_FORCE_SYSTEM_ERROR,
+            SYSTEM_ERROR_RATE,
+        )
         return JSONResponse(
             status_code=500,
             content={"detail": "Simulated system error", "error_code": "SYSTEM_ERROR"},
@@ -418,7 +500,11 @@ async def mock_simulation_middleware(request: Request, call_next):
                 },
             )
 
-    delay_ms = random.uniform(MIN_LATENCY_MS, MAX_LATENCY_MS)
+    if MOCK_SEED:
+        # Deterministic latency when a seed is set (midpoint of the range).
+        delay_ms = (MIN_LATENCY_MS + MAX_LATENCY_MS) / 2.0
+    else:
+        delay_ms = random.uniform(MIN_LATENCY_MS, MAX_LATENCY_MS)
     await asyncio.sleep(delay_ms / 1000.0)
 
     return await call_next(request)
@@ -446,6 +532,46 @@ async def generic_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Internal server error", "error_code": "INTERNAL_ERROR"},
     )
+
+
+# ──────────────────────────────────────────────
+# Frontend (single-server static hosting)
+# ──────────────────────────────────────────────
+# index.html / app.js / styles.css live next to this file and are
+# served by the same FastAPI process so the UI works same-origin
+# (no hardcoded localhost API base URL needed).
+
+if (BASE_DIR / "assets").is_dir():
+    app.mount("/static", StaticFiles(directory=BASE_DIR / "assets"), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def serve_frontend():
+    index_path = BASE_DIR / "index.html"
+    if not index_path.is_file():
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Frontend not found", "error_code": "NOT_FOUND"},
+        )
+    return FileResponse(index_path, media_type="text/html")
+
+
+@app.get("/app.js", include_in_schema=False)
+async def serve_app_js():
+    return FileResponse(BASE_DIR / "app.js", media_type="application/javascript")
+
+
+@app.get("/styles.css", include_in_schema=False)
+async def serve_styles_css():
+    return FileResponse(BASE_DIR / "styles.css", media_type="text/css")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def serve_favicon():
+    favicon = BASE_DIR / "favicon.ico"
+    if not favicon.is_file():
+        return JSONResponse(status_code=204, content=None)
+    return FileResponse(favicon, media_type="image/x-icon")
 
 
 # ──────────────────────────────────────────────
@@ -481,6 +607,13 @@ async def health(db: Session = Depends(get_db)):
             "payment_success_rate_pct": SUCCESS_RATE,
             "payment_decline_rate_pct": DECLINE_RATE,
             "payment_pending_rate_pct": PENDING_RATE,
+            "seed": MOCK_SEED or None,
+            "force_outcome": MOCK_FORCE_OUTCOME or None,
+            "force_system_error": MOCK_FORCE_SYSTEM_ERROR,
+            "db_error_rate_pct": MOCK_DB_ERROR_RATE,
+            "force_db_error": MOCK_FORCE_DB_ERROR,
+            "loki_enabled": is_loki_enabled(),
+            "loki_url_configured": bool(get_loki_url()),
         },
     )
 
@@ -510,6 +643,7 @@ async def authorize_payment(req: PaymentAuthorizeRequest, db: Session = Depends(
         card_last4,
     )
     try:
+        maybe_raise_simulated_db_error("payments.authorize")
         now = db_now()
         customer_id = get_or_create_customer(db, req.customer.name, req.customer.email)
         card_brand = detect_card_brand(req.card.card_number)
@@ -585,6 +719,7 @@ async def authorize_payment(req: PaymentAuthorizeRequest, db: Session = Depends(
 async def capture_payment(req: PaymentCaptureRequest, db: Session = Depends(get_db)):
     logger.info("Payment capture requested for payment_id=%s", req.payment_id)
     try:
+        maybe_raise_simulated_db_error("payments.capture")
         payment = db.query(PaymentModel).filter(PaymentModel.payment_id == req.payment_id).first()
         if not payment:
             logger.warning("Payment capture failed: payment_id=%s not found", req.payment_id)
@@ -637,6 +772,7 @@ async def capture_payment(req: PaymentCaptureRequest, db: Session = Depends(get_
 async def refund_payment(req: PaymentRefundRequest, db: Session = Depends(get_db)):
     logger.info("Payment refund requested for payment_id=%s", req.payment_id)
     try:
+        maybe_raise_simulated_db_error("payments.refund")
         payment = db.query(PaymentModel).filter(PaymentModel.payment_id == req.payment_id).first()
         if not payment:
             logger.warning("Payment refund failed: payment_id=%s not found", req.payment_id)
@@ -766,6 +902,7 @@ async def create_subscription(req: SubscriptionCreateRequest, db: Session = Depe
         req.amount,
     )
     try:
+        maybe_raise_simulated_db_error("subscriptions.create")
         now = db_now()
         customer_id = get_or_create_customer(db, req.customer.name, req.customer.email)
 
@@ -850,6 +987,7 @@ async def get_subscription(subscription_id: str, db: Session = Depends(get_db)):
 async def cancel_subscription(subscription_id: str, db: Session = Depends(get_db)):
     logger.info("Subscription cancellation requested for subscription_id=%s", subscription_id)
     try:
+        maybe_raise_simulated_db_error("subscriptions.cancel")
         sub = (
             db.query(SubscriptionModel)
             .filter(SubscriptionModel.subscription_id == subscription_id)
@@ -986,4 +1124,7 @@ async def list_subscriptions(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app:app", host="0.0.0.0", port=8001, reload=False)
+    # Host-provided PORT wins (Render/Railway/Heroku-style); default 8001
+    # preserves the existing local mock_payment port.
+    port = int(os.getenv("PORT", "8001"))
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)

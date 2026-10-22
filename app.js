@@ -4,7 +4,14 @@
    ────────────────────────────────────────────── */
 
 /* ── Configuration ──────────────────────────── */
-const API_BASE_URL = "http://localhost:8001";
+// Same-origin: the FastAPI process serves this UI and the API together.
+// Override with <meta name="api-base" content="..."> or
+// window.MOCK_API_BASE only when the API lives on another origin.
+const API_BASE_URL = (
+    document.querySelector('meta[name="api-base"]')?.content ||
+    window.MOCK_API_BASE ||
+    ""
+).replace(/\/$/, "");
 const REQUEST_TIMEOUT = 10000;
 const HEALTH_POLL_INTERVAL = 5000;
 
