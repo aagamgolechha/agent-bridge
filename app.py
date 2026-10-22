@@ -21,6 +21,12 @@ from sqlalchemy import create_engine, Column, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
 
+from dotenv import load_dotenv
+
+# Load .env from the same folder as this file before reading any env vars.
+# Explicit path is required because CWD may differ when run via uvicorn.
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
+
 from loki_logging import configure_logging
 
 logger = configure_logging()
@@ -29,15 +35,36 @@ logger = configure_logging()
 # Configuration via Environment Variables
 # ──────────────────────────────────────────────
 
-MIN_LATENCY_MS = int(os.getenv("MOCK_MIN_LATENCY_MS", "50"))
-MAX_LATENCY_MS = int(os.getenv("MOCK_MAX_LATENCY_MS", "300"))
-SYSTEM_ERROR_RATE = int(os.getenv("MOCK_SYSTEM_ERROR_RATE", "0"))
-THROTTLE_ENABLED = os.getenv("MOCK_THROTTLE_ENABLED", "false").lower() == "true"
-THROTTLE_RPM = int(os.getenv("MOCK_THROTTLE_REQUESTS_PER_MINUTE", "60"))
-SUCCESS_RATE = int(os.getenv("MOCK_PAYMENT_SUCCESS_RATE", "90"))
-DECLINE_RATE = int(os.getenv("MOCK_PAYMENT_DECLINE_RATE", "8"))
-PENDING_RATE = int(os.getenv("MOCK_PAYMENT_PENDING_RATE", "2"))
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./mock_payments.db")
+def _env_int(name: str, default: int) -> int:
+    raw = (os.getenv(name, "") or "").strip()
+    if raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"Warning: invalid int for {name}={raw!r}, using default {default}")
+
+
+        return default
+
+
+def _env_str(name: str, default: str) -> str:
+    raw = os.getenv(name, None)
+    if raw is None:
+        return default
+    raw = raw.strip()
+    return raw if raw != "" else default
+
+
+MIN_LATENCY_MS = _env_int("MOCK_MIN_LATENCY_MS", 50)
+MAX_LATENCY_MS = _env_int("MOCK_MAX_LATENCY_MS", 300)
+SYSTEM_ERROR_RATE = _env_int("MOCK_SYSTEM_ERROR_RATE", 0)
+THROTTLE_ENABLED = (os.getenv("MOCK_THROTTLE_ENABLED", "false") or "").strip().lower() == "true"
+THROTTLE_RPM = _env_int("MOCK_THROTTLE_REQUESTS_PER_MINUTE", 60)
+SUCCESS_RATE = _env_int("MOCK_PAYMENT_SUCCESS_RATE", 90)
+DECLINE_RATE = _env_int("MOCK_PAYMENT_DECLINE_RATE", 8)
+PENDING_RATE = _env_int("MOCK_PAYMENT_PENDING_RATE", 2)
+DATABASE_URL = _env_str("DATABASE_URL", "sqlite:///./mock_payments.db")
 
 # ──────────────────────────────────────────────
 # SQLAlchemy Setup
@@ -986,4 +1013,6 @@ async def list_subscriptions(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app:app", host="0.0.0.0", port=8001, reload=False)
+    _port = _env_int("PORT", 8001)
+    _host = _env_str("HOST", "0.0.0.0")
+    uvicorn.run("app:app", host=_host, port=_port, reload=False)
