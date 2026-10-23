@@ -692,7 +692,8 @@ async def refund_payment(req: PaymentRefundRequest, db: Session = Depends(get_db
                 status_code=404,
                 detail={"detail": "Payment not found", "error_code": "NOT_FOUND"},
             )
-        if payment.status != "CAPTURED":
+        # if payment.status != "CAPTURED":
+        if payment.status == "REFUNDED":
             logger.warning(
                 "Payment refund rejected: payment_id=%s status '%s' is not CAPTURED",
                 req.payment_id,
@@ -705,6 +706,7 @@ async def refund_payment(req: PaymentRefundRequest, db: Session = Depends(get_db
                     "error_code": "INVALID_STATUS",
                 },
             )
+        logger.info("Refunding payment payment_id=%s payment_status=%s amount=%.2f", payment.payment_id, payment.status, payment.amount)
         payment.status = "REFUNDED"
         payment.updated_at = db_now()
         db.commit()
