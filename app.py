@@ -31,6 +31,22 @@ from loki_logging import configure_logging
 
 logger = configure_logging()
 
+import logging
+
+
+class _HealthCheckFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Uvicorn access log message contains the request line, e.g. "GET /health HTTP/1.1" 200
+        try:
+            return "/health" not in record.getMessage()
+        except Exception:
+            return True
+
+
+# Silence frequent /health probes from uvicorn's access logger.
+# Applied at import time so it works with `uvicorn app:app` as well as `python app.py`.
+logging.getLogger("uvicorn.access").addFilter(_HealthCheckFilter())
+
 # ──────────────────────────────────────────────
 # Configuration via Environment Variables
 # ──────────────────────────────────────────────
@@ -385,6 +401,11 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    # Skip logging entirely for frequent health probes to avoid log spam.
+    # The endpoint still executes normally.
+    if request.url.path == "/health":
+        return await call_next(request)
+
     start = time.perf_counter()
 
     logger.info(
