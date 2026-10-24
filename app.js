@@ -480,6 +480,7 @@ function renderSubscriptions() {
             PAST_DUE: "badge-warning",
             FAILED: "badge-danger",
         }[s.status] || "badge-neutral";
+        const isDue = s.status === "ACTIVE" && !isNaN(Date.parse(s.next_billing_date)) && new Date(s.next_billing_date) <= new Date();
 
         return `<tr>
             <td style="font-family:monospace;font-size:0.8rem">${s.subscription_id}</td>
@@ -489,7 +490,7 @@ function renderSubscriptions() {
             <td>${s.billing_cycle}</td>
             <td><span class="badge ${statusClass}">${s.status}</span></td>
             <td style="font-size:0.78rem">${new Date(s.start_date).toLocaleDateString()}</td>
-            <td style="font-size:0.78rem">${new Date(s.next_billing_date).toLocaleDateString()}</td>
+            <td style="font-size:0.78rem">${new Date(s.next_billing_date).toLocaleDateString()}${isDue ? ' <span class="badge badge-warning">Due</span>' : ''}</td>
             <td>
                 <button class="btn btn-sm btn-secondary" onclick="viewSubscription('${s.subscription_id}')">View</button>
                 ${s.status === 'ACTIVE' ? `<button class="btn btn-sm btn-danger" onclick="quickCancelSub('${s.subscription_id}')">Cancel</button>` : ''}
@@ -526,7 +527,9 @@ async function quickCancelSub(id) {
 async function viewSubscription(id) {
     try {
         const s = await apiRequest("GET", `/subscriptions/${id}`);
+        const detailDue = s.status === "ACTIVE" && !isNaN(Date.parse(s.next_billing_date)) && new Date(s.next_billing_date) <= new Date();
         openModal("Subscription Details", `
+            ${detailDue ? `<div style="margin-bottom:12px"><span class="badge badge-warning">Due — next billing date reached</span></div>` : ''}
             <div class="form-group"><label>Subscription ID</label><input type="text" value="${s.subscription_id}" readonly /></div>
             <div class="form-group"><label>Customer ID</label><input type="text" value="${s.customer_id}" readonly /></div>
             <div class="form-row">
@@ -560,7 +563,7 @@ function showSubscriptionModal() {
             <div class="form-group"><label>Billing Cycle</label>
                 <select id="sub-cycle">
                     <option value="monthly">Monthly</option>
-                    <option value="quarterly">Quarterly</option>
+                    <option value="weekly">Weekly</option>
                     <option value="yearly">Yearly</option>
                 </select>
             </div>
