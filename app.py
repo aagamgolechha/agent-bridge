@@ -122,6 +122,7 @@ class PaymentModel(Base):
 class SubscriptionModel(Base):
     __tablename__ = "subscriptions"
     subscription_id = Column(String, primary_key=True, index=True)
+    customer_email = Column(String, nullable=False, index=True)
     customer_id = Column(String, nullable=False, index=True)
     plan_id = Column(String, nullable=False)
     amount = Column(Float, nullable=False)
@@ -364,9 +365,30 @@ throttle_state = ThrottleState()
 async def lifespan(app: FastAPI):
     logger.info("Mock Payment Gateway starting up...")
     Base.metadata.create_all(bind=engine)
+    _migrate_subscriptions_add_customer_email()
     logger.info("Database initialized successfully")
     yield
     logger.info("Mock Payment Gateway shutting down...")
+
+
+def _migrate_subscriptions_add_customer_email() -> None:
+    """Add missing customer_email column to pre-existing subscriptions tables."""
+    from sqlalchemy import inspect, text
+
+    try:
+        cols = {c["name"] for c in inspect(engine).get_columns("subscriptions")}
+    except Exception:
+        return
+    if "customer_email" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE subscriptions ADD COLUMN customer_email VARCHAR"))
+        conn.execute(text("UPDATE subscriptions SET customer_email = '' WHERE customer_email IS NULL"))
+        try:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_subscriptions_customer_email ON subscriptions (customer_email)"))
+        except Exception:
+            pass
+    logger.info("Migrated subscriptions table: added customer_email column")
 
 
 # ──────────────────────────────────────────────
@@ -834,6 +856,7 @@ async def create_subscription(req: SubscriptionCreateRequest, db: Session = Depe
 
         subscription = SubscriptionModel(
             subscription_id=generate_id("sub"),
+            customer_email=req.customer.email,
             customer_id=customer_id,
             plan_id=req.plan_id,
             amount=req.amount,
@@ -850,9 +873,13 @@ async def create_subscription(req: SubscriptionCreateRequest, db: Session = Depe
         db.commit()
         db.refresh(subscription)
         logger.info(
-            "Subscription created successfully subscription_id=%s customer_id=%s",
+            "Subscription created successfully subscription_id=%s, customer_email=%s, plan_id=%s, billing_cycle=%s, start_date=%s, next_billing_date=%s",
             subscription.subscription_id,
-            customer_id,
+            subscription.customer_email,
+            subscription.plan_id,
+            subscription.billing_cycle,
+            subscription.start_date,
+            subscription.next_billing_date,
         )
         return subscription_to_response(subscription)
     except SQLAlchemyError as exc:
