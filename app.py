@@ -605,30 +605,32 @@ async def authorize_payment(req: PaymentAuthorizeRequest, db: Session = Depends(
 
         if status == "AUTHORIZED":
             logger.info(
-                "Payment authorized successfully payment_id=%s auth_code=%s txn_ref=%s",
+                "Payment authorized successfully for customer=%s, customer id=%s payment_id=%s auth_code=%s txn_ref=%s",
+                req.customer.email,
+                customer_id,
                 payment.payment_id,
                 payment.authorization_code,
                 payment.transaction_reference,
             )
         elif status == "DECLINED":
             logger.warning(
-                "Payment declined payment_id=%s reason=%s customer=%s",
+                "Payment declined for customer=%s payment_id=%s reason=%s",
+                req.customer.email,
                 payment.payment_id,
                 failure_reason,
-                req.customer.email,
             )
         elif status == "PENDING":
             logger.info(
-                "Payment pending payment_id=%s customer=%s",
-                payment.payment_id,
+                "Payment pending for customer=%s payment_id=%s",
                 req.customer.email,
+                payment.payment_id,
             )
         else:
             logger.error(
-                "Payment failed payment_id=%s reason=%s customer=%s",
+                "Payment failed for customer=%s payment_id=%s reason=%s",
+                req.customer.email,
                 payment.payment_id,
                 failure_reason,
-                req.customer.email,
             )
 
         return payment_to_response(payment)
